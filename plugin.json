@@ -1,0 +1,11 @@
+{
+  "name": "ghostty-bus",
+  "version": "0.1.0",
+  "description": "Zero-dependency MCP server and CLI bridge for live agent-to-agent discovery and messaging across open Ghostty terminals on macOS.",
+  "logo": "assets/logo.svg",
+  "homepage": "https://github.com/jcortesebustos/ghostty-bus-mcp",
+  "repository": "https://github.com/jcortesebustos/ghostty-bus-mcp",
+  "author": {
+    "name": "Jose Cortese"
+  }
+}

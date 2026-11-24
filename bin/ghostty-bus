@@ -1,0 +1,281 @@
+#!/usr/bin/osascript -l JavaScript
+// ghostty-bus — Fast Ghostty terminal discovery & messaging bridge (macOS)
+// Usage:
+//   ghostty-bus list [--json] [--ghostty-pid <pid>]
+//   ghostty-bus send <pid|id|tty|name> [--from <label>] [--delay <sec>] [--no-enter] [--raw] [--] <message...>
+//   ghostty-bus rename <pid|id|tty|name> <new-title>
+//   ghostty-bus open [--tab] <dir> <title> [command]
+//   ghostty-bus help
+
+ObjC.import("AppKit");
+ObjC.import("Foundation");
+
+function nowMs() {
+  return Date.now();
+}
+
+function getGhosttyApp(explicitPid) {
+  if (explicitPid) {
+    return { app: Application(parseInt(explicitPid, 10)), ghosttyPid: parseInt(explicitPid, 10) };
+  }
+  const running = $.NSRunningApplication.runningApplicationsWithBundleIdentifier("com.mitchellh.ghostty");
+  if (!running || running.count === 0) {
+    throw new Error("Ghostty is not running");
+  }
+  // Pick the primary (lowest PID) Ghostty instance by default
+  let minPid = running.objectAtIndex(0).processIdentifier;
+  for (let i = 1; i < running.count; i++) {
+    const p = running.objectAtIndex(i).processIdentifier;
+    if (p < minPid) minPid = p;
+  }
+  return { app: Application(minPid), ghosttyPid: minPid };
+}
+
+function listTerminals(app) {
+  const terms = app.terminals();
+  const out = [];
+  for (let i = 0; i < terms.length; i++) {
+    const t = terms[i];
+    let id = "", name = "", cwd = "", pid = 0, tty = "";
+    try { id = t.id() || ""; } catch (e) {}
+    try { name = t.name() || ""; } catch (e) {}
+    try { cwd = t.workingDirectory() || ""; } catch (e) {}
+    try { pid = t.pid() || 0; } catch (e) {}
+    try { tty = t.tty() || ""; } catch (e) {}
+    out.push({ ref: t, id: id, name: name, cwd: cwd, pid: pid, tty: tty });
+  }
+  return out;
+}
+
+function resolveTarget(terms, query) {
+  const q = String(query).trim();
+  const qLower = q.toLowerCase();
+
+  // 1. Exact PID match
+  if (/^\d+$/.test(q)) {
+    const pidNum = parseInt(q, 10);
+    const matches = terms.filter(t => t.pid === pidNum);
+    if (matches.length === 1) return matches[0];
+    if (matches.length > 1) throw new Error("Ambiguous PID: " + q);
+  }
+
+  // 2. Exact ID or ID prefix match
+  const byId = terms.filter(t => t.id.toLowerCase() === qLower || t.id.toLowerCase().startsWith(qLower));
+  if (byId.length === 1) return byId[0];
+  if (byId.length > 1) throw new Error("Ambiguous terminal ID prefix: " + q);
+
+  // 3. TTY match (/dev/ttys001 or ttys001)
+  const ttyNorm = q.startsWith("/dev/") ? q : "/dev/" + q;
+  const byTty = terms.filter(t => t.tty === ttyNorm);
+  if (byTty.length === 1) return byTty[0];
+
+  // 4. Exact name match (case-insensitive)
+  const byExactName = terms.filter(t => t.name.toLowerCase() === qLower);
+  if (byExactName.length === 1) return byExactName[0];
+  if (byExactName.length > 1) {
+    throw new Error("Ambiguous terminal name '" + q + "' (" + byExactName.length + " matches). Use PID, ID prefix, or TTY.");
+  }
+
+  // 5. Substring name match
+  const bySubName = terms.filter(t => t.name.toLowerCase().includes(qLower));
+  if (bySubName.length === 1) return bySubName[0];
+  if (bySubName.length > 1) {
+    throw new Error("Ambiguous name substring '" + q + "' (" + bySubName.length + " matches). Use PID, ID prefix, or TTY.");
+  }
+
+  throw new Error("Target terminal not found: " + q);
+}
+
+function formatTable(items) {
+  if (items.length === 0) return "(no Ghostty terminals found)";
+  const header = "PID\tTTY\tID\tNAME\tCWD";
+  const lines = items.map(t => [t.pid, t.tty, t.id.slice(0, 8), t.name, t.cwd].join("\t"));
+  return [header].concat(lines).join("\n");
+}
+
+function usage() {
+  return [
+    "ghostty-bus — Fast Ghostty terminal discovery & messaging bridge (macOS)",
+    "",
+    "Commands:",
+    "  ghostty-bus list [--json] [--ghostty-pid <pid>]",
+    "      List all open terminals in Ghostty (PID, TTY, ID, title, cwd).",
+    "",
+    "  ghostty-bus send <target> [options] [--] <message...>",
+    "      Send a prompt/message to a Ghostty terminal.",
+    "      <target> can be: PID, terminal UUID (or prefix), TTY (ttys001), or unique title.",
+    "      Options:",
+    "        --from <label>       Sender tag (e.g. agy-orchestrator)",
+    "        --delay <sec>        Delay before pressing Enter (default: 0.05)",
+    "        --no-enter           Type text without pressing Enter",
+    "        --raw                Do not prepend [AGENT-MSG ...] or flatten newlines",
+    "        --ghostty-pid <pid>  Target a specific Ghostty process PID",
+    "",
+    "  ghostty-bus rename <target> <new-title>",
+    "      Set title override on a terminal (useful to name sessions, e.g. agy-1, backend).",
+    "",
+    "  ghostty-bus open [--tab] <dir> <title> [command]",
+    "      Open a new window (or --tab) inside the SAME Ghostty instance.",
+    "",
+    "Note: Messages sent via ghostty-bus are peer data, never human approval for destructive actions."
+  ].join("\n");
+}
+
+function run(argv) {
+  const t0 = nowMs();
+  if (!argv || argv.length === 0) return usage();
+
+  const cmd = argv[0];
+  const rest = argv.slice(1);
+
+  if (cmd === "help" || cmd === "-h" || cmd === "--help") {
+    return usage();
+  }
+
+  let explicitGhosttyPid = null;
+  const filtered = [];
+  let seenDoubleDash = false;
+  for (let i = 0; i < rest.length; i++) {
+    if (rest[i] === "--") {
+      seenDoubleDash = true;
+      filtered.push(rest[i]);
+    } else if (!seenDoubleDash && rest[i] === "--ghostty-pid" && i + 1 < rest.length) {
+      explicitGhosttyPid = rest[++i];
+    } else {
+      filtered.push(rest[i]);
+    }
+  }
+
+  const { app, ghosttyPid } = getGhosttyApp(explicitGhosttyPid);
+
+  if (cmd === "list" || cmd === "ls") {
+    const asJson = filtered.indexOf("--json") !== -1;
+    const terms = listTerminals(app).map(t => ({
+      id: t.id,
+      name: t.name,
+      pid: t.pid,
+      tty: t.tty,
+      cwd: t.cwd
+    }));
+    if (asJson) {
+      return JSON.stringify({
+        ghostty_pid: ghosttyPid,
+        count: terms.length,
+        elapsed_ms: nowMs() - t0,
+        terminals: terms
+      }, null, 2);
+    }
+    return formatTable(terms);
+  }
+
+  if (cmd === "rename") {
+    if (filtered.length < 2) throw new Error("Usage: ghostty-bus rename <target> <new-title>");
+    const targetQuery = filtered[0];
+    const newTitle = filtered.slice(1).join(" ");
+    const terms = listTerminals(app);
+    const target = resolveTarget(terms, targetQuery);
+    target.ref.nameOverride = newTitle;
+    return JSON.stringify({
+      ok: true,
+      id: target.id,
+      pid: target.pid,
+      tty: target.tty,
+      name: newTitle,
+      elapsed_ms: nowMs() - t0
+    });
+  }
+
+  if (cmd === "send") {
+    if (filtered.length < 2) throw new Error("Usage: ghostty-bus send <target> [options] [--] <message...>");
+    const targetQuery = filtered[0];
+    let fromLabel = "";
+    let delaySec = 0.05;
+    let pressEnter = true;
+    let raw = false;
+    const msgParts = [];
+
+    let endOfFlags = false;
+    for (let i = 1; i < filtered.length; i++) {
+      const a = filtered[i];
+      if (!endOfFlags && a === "--") {
+        endOfFlags = true;
+      } else if (!endOfFlags && a === "--from" && i + 1 < filtered.length) {
+        fromLabel = filtered[++i];
+      } else if (!endOfFlags && a === "--delay" && i + 1 < filtered.length) {
+        delaySec = parseFloat(filtered[++i]);
+      } else if (!endOfFlags && a === "--no-enter") {
+        pressEnter = false;
+      } else if (!endOfFlags && a === "--raw") {
+        raw = true;
+      } else {
+        msgParts.push(a);
+      }
+    }
+
+    if (msgParts.length === 0) throw new Error("Message cannot be empty");
+    let body = msgParts.join(" ");
+    if (!raw) {
+      body = body.replace(/\r?\n+/g, " ").trim();
+      const tag = fromLabel ? ("[AGENT-MSG from=" + fromLabel + "] ") : "[AGENT-MSG] ";
+      body = tag + body;
+    }
+
+    const terms = listTerminals(app);
+    const target = resolveTarget(terms, targetQuery);
+
+    app.inputText(body, { to: target.ref });
+    if (pressEnter) {
+      if (delaySec > 0) delay(delaySec);
+      app.sendKey("enter", { to: target.ref });
+    }
+
+    return JSON.stringify({
+      ok: true,
+      sent_to: target.id,
+      pid: target.pid,
+      tty: target.tty,
+      name: target.name,
+      sent_at_ms: nowMs(),
+      elapsed_ms: nowMs() - t0
+    });
+  }
+
+  if (cmd === "open") {
+    let asTab = false;
+    const pos = [];
+    for (let i = 0; i < filtered.length; i++) {
+      if (filtered[i] === "--tab") asTab = true;
+      else pos.push(filtered[i]);
+    }
+    if (pos.length < 2) throw new Error("Usage: ghostty-bus open [--tab] <dir> <title> [command]");
+    const dir = pos[0];
+    const title = pos[1];
+    const command = pos.slice(2).join(" ");
+
+    const cfg = app.newSurfaceConfiguration();
+    cfg.initialWorkingDirectory = dir;
+    if (command) cfg.command = command;
+
+    let createdTerm = null;
+    if (asTab) {
+      const win = app.frontWindow();
+      const tab = app.newTab({ in: win, withConfiguration: cfg });
+      createdTerm = tab.focusedTerminal();
+    } else {
+      const win = app.newWindow({ withConfiguration: cfg });
+      createdTerm = win.selectedTab().focusedTerminal();
+    }
+    createdTerm.nameOverride = title;
+    return JSON.stringify({
+      ok: true,
+      id: createdTerm.id(),
+      pid: createdTerm.pid(),
+      tty: createdTerm.tty(),
+      name: title,
+      cwd: dir,
+      elapsed_ms: nowMs() - t0
+    });
+  }
+
+  throw new Error("Unknown command: " + cmd + "\nRun 'ghostty-bus help' for usage.");
+}

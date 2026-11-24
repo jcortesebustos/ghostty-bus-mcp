@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "ghostty-bus": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "ghostty-bus-mcp"
+      ]
+    }
+  }
+}

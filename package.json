@@ -1,0 +1,46 @@
+{
+  "name": "ghostty-bus-mcp",
+  "version": "0.1.0",
+  "description": "Zero-dependency MCP server and CLI bridge for live agent-to-agent discovery and messaging across open Ghostty terminals on macOS.",
+  "license": "MIT",
+  "author": "Jose Cortese",
+  "homepage": "https://github.com/jcortesebustos/ghostty-bus-mcp#readme",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/jcortesebustos/ghostty-bus-mcp.git"
+  },
+  "os": [
+    "darwin"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "bin": {
+    "ghostty-bus-mcp": "./bin/ghostty-bus-mcp.js",
+    "ghostty-bus": "./bin/ghostty-bus"
+  },
+  "files": [
+    "assets/logo.svg",
+    "bin/",
+    "plugin.json",
+    "mcp_config.json",
+    "rules/",
+    "skills/",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "test": "node test/smoke.js"
+  },
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "ghostty",
+    "antigravity",
+    "agy",
+    "multi-agent",
+    "macos",
+    "applescript",
+    "terminal"
+  ]
+}
