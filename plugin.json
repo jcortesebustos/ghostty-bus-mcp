@@ -1,5 +1,7 @@
 {
+  "$schema": "https://antigravity.google/schemas/v1/plugin.json",
   "name": "ghostty-bus",
+  "displayName": "Ghostty Bus",
   "version": "0.1.0",
   "description": "Zero-dependency MCP server and CLI bridge for live agent-to-agent discovery and messaging across open Ghostty terminals on macOS.",
   "logo": "assets/logo.svg",
@@ -7,5 +9,10 @@
   "repository": "https://github.com/jcortesebustos/ghostty-bus-mcp",
   "author": {
     "name": "Jose Cortese"
-  }
+  },
+  "suggestedPrompts": [
+    "List all open Ghostty agent terminals using ghostty-bus",
+    "Rename this terminal to agent-1 and ping another open Ghostty session",
+    "Open a new Ghostty tab in the same instance for a worker agent"
+  ]
 }
