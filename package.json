@@ -7,7 +7,7 @@
   "homepage": "https://github.com/jcortesebustos/ghostty-bus-mcp#readme",
   "repository": {
     "type": "git",
-    "url": "https://github.com/jcortesebustos/ghostty-bus-mcp.git"
+    "url": "git+https://github.com/jcortesebustos/ghostty-bus-mcp.git"
   },
   "os": [
     "darwin"
@@ -16,8 +16,8 @@
     "node": ">=18"
   },
   "bin": {
-    "ghostty-bus-mcp": "./bin/ghostty-bus-mcp.js",
-    "ghostty-bus": "./bin/ghostty-bus"
+    "ghostty-bus-mcp": "bin/ghostty-bus-mcp.js",
+    "ghostty-bus": "bin/ghostty-bus"
   },
   "files": [
     "assets/logo.svg",
